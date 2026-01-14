@@ -1,4 +1,4 @@
-import React, { Component } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -6,130 +6,140 @@ import {
   TextInput,
   TouchableOpacity,
   FlatList,
-  NetInfo,
   SafeAreaView
 } from 'react-native';
-
+import NetInfo from '@react-native-community/netinfo';
 import DB from './src/services/Database';
 import SyncEngine from './src/services/SyncEngine';
 
-export default class App extends Component {
-  constructor(props) {
-    super(props);
-    this.state = {
-      todos: [],
-      newTodo: '',
-      isSyncing: false,
-      isConnected: true // Default to true, will update on mount
-    };
-  }
+export default function App() {
+  const [todos, setTodos] = useState([]);
+  const [newTodo, setNewTodo] = useState('');
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isConnected, setIsConnected] = useState(true);
 
-  componentDidMount() {
-    this.init();
-  }
-
-  componentWillUnmount() {
-    NetInfo.isConnected.removeEventListener('connectionChange', this.handleConnectivityChange);
-  }
-
-  handleConnectivityChange = (isConnected) => {
-    console.log(`[Network] Connected: ${isConnected}`);
-    this.setState({ isConnected });
-    if (isConnected) {
-      this.sync();
-    }
+  // Define helper functions first so they are available in useEffect
+  const loadTodos = async () => {
+    const loadedTodos = await DB.getTodos();
+    setTodos(loadedTodos);
   };
 
-  async init() {
-    await DB.initDB();
-    this.loadTodos();
+  const sync = async () => {
+    setIsSyncing(true);
+    await SyncEngine.sync();
+    setIsSyncing(false);
+    loadTodos(); // Refresh in case Pull brought new items
+  };
 
-    // Check initial connection AFTER DB is ready
-    NetInfo.isConnected.fetch().then(isConnected => {
-      this.setState({ isConnected });
-      if (isConnected) {
-        this.sync();
-      }
-    });
-
-    // Subscribe to network changes
-    NetInfo.isConnected.addEventListener('connectionChange', this.handleConnectivityChange);
-  }
-
-  async loadTodos() {
-    const todos = await DB.getTodos();
-    this.setState({ todos });
-  }
-
-  addTodo = async () => {
-    if (!this.state.newTodo) return;
+  const addTodo = async () => {
+    if (!newTodo) return;
 
     const todo = {
       id: Date.now().toString(),
-      title: this.state.newTodo,
+      title: newTodo,
       status: 'pending'
     };
 
     // Optimistic UI Update handled by loadTodos after DB insert
     await DB.addTodo(todo);
-    this.setState({ newTodo: '' });
-    this.loadTodos();
+    setNewTodo('');
+    loadTodos();
 
     // Auto-sync if online
-    if (this.state.isConnected) {
-      this.sync();
+    if (isConnected) {
+      sync();
     }
   };
 
-  sync = async () => {
-    this.setState({ isSyncing: true });
-    await SyncEngine.sync();
-    this.setState({ isSyncing: false });
-    this.loadTodos(); // Refresh in case Pull brought new items
-  };
+  useEffect(() => {
+    let isMounted = true;
 
-  renderItem = ({ item }) => (
+    const handleConnectivityChange = (connectionInfo) => {
+      // In v3/Legacy, connectionInfo might be an object { type: 'wifi', ... }
+      // We need to determine 'isConnected'.
+      // Usually type !== 'none' && type !== 'unknown'
+      const connected = connectionInfo.type !== 'none' && connectionInfo.type !== 'unknown';
+      console.log(`[Network] Connected: ${connected} (${connectionInfo.type})`);
+
+      if (isMounted) {
+        setIsConnected(connected);
+        if (connected) {
+          sync();
+        }
+      }
+    };
+
+    const init = async () => {
+      await DB.initDB();
+      if (!isMounted) return;
+
+      loadTodos();
+
+      // Check initial connection
+      // Use getConnectionInfo() for v3/Legacy compatibility
+      NetInfo.getConnectionInfo().then(connectionInfo => {
+        if (isMounted) {
+          const connected = connectionInfo.type !== 'none' && connectionInfo.type !== 'unknown';
+          setIsConnected(connected);
+          if (connected) {
+            sync();
+          }
+        }
+      });
+
+      // Subscribe to network changes
+      // v3 requires event name 'connectionChange'
+      NetInfo.addEventListener('connectionChange', handleConnectivityChange);
+    };
+
+    init();
+
+    return () => {
+      isMounted = false;
+      NetInfo.removeEventListener('connectionChange', handleConnectivityChange);
+    };
+  }, []);
+
+  const renderItem = ({ item }) => (
     <View style={styles.item}>
       <Text style={styles.title}>{item.title}</Text>
       <Text style={styles.status}>{item.status}</Text>
     </View>
   );
 
-  render() {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.headerText}>PowerSync POC (RN 0.59)</Text>
-        </View>
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerText}>PowerSync POC (RN 0.59)</Text>
+      </View>
 
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            placeholder="New Todo..."
-            value={this.state.newTodo}
-            onChangeText={text => this.setState({ newTodo: text })}
-          />
-          <TouchableOpacity style={styles.addButton} onPress={this.addTodo}>
-            <Text style={styles.buttonText}>Add</Text>
-          </TouchableOpacity>
-        </View>
-
-        <FlatList
-          data={this.state.todos}
-          renderItem={this.renderItem}
-          keyExtractor={item => item.id}
-          contentContainerStyle={styles.list}
-          ListEmptyComponent={<Text style={styles.empty}>No Todos</Text>}
+      <View style={styles.inputContainer}>
+        <TextInput
+          style={styles.input}
+          placeholder="New Todo..."
+          value={newTodo}
+          onChangeText={setNewTodo}
         />
-
-        <TouchableOpacity style={styles.syncButton} onPress={this.sync} disabled={this.state.isSyncing}>
-          <Text style={styles.syncButtonText}>
-            {this.state.isSyncing ? "Syncing..." : "Sync Now"}
-          </Text>
+        <TouchableOpacity style={styles.addButton} onPress={addTodo}>
+          <Text style={styles.buttonText}>Add</Text>
         </TouchableOpacity>
-      </SafeAreaView>
-    );
-  }
+      </View>
+
+      <FlatList
+        data={todos}
+        renderItem={renderItem}
+        keyExtractor={item => item.id}
+        contentContainerStyle={styles.list}
+        ListEmptyComponent={<Text style={styles.empty}>No Todos</Text>}
+      />
+
+      <TouchableOpacity style={styles.syncButton} onPress={sync} disabled={isSyncing}>
+        <Text style={styles.syncButtonText}>
+          {isSyncing ? "Syncing..." : "Sync Now"}
+        </Text>
+      </TouchableOpacity>
+    </SafeAreaView>
+  );
 }
 
 const styles = StyleSheet.create({

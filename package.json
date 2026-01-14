@@ -3,12 +3,14 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "start": "node node_modules/react-native/local-cli/cli.js start"
+    "start": "node node_modules/react-native/local-cli/cli.js start",
+    "android": "npx react-native run-android"
   },
   "dependencies": {
+    "@react-native-community/netinfo": "^3.2.1",
     "react": "16.8.3",
     "react-native": "0.59.10",
-    "react-native-sqlite-storage": "^6.0.1"
+    "react-native-sqlite-storage": "^4.1.0"
   },
   "devDependencies": {
     "@babel/core": "^7.28.6",
